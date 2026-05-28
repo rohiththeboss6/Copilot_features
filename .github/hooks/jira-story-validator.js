@@ -4,8 +4,8 @@ const fs = require("fs");
 const path = require("path");
 
 const WORKSPACE_ROOT = process.cwd();
-const TARGET_FILE = "registeration_user_stories.md";
 const TITLE_REGEX = /^##\s\[([A-Z][A-Z0-9]+-\d+)\]\s.+$/;
+const STORY_OUTPUT_REGEX = /(?:^|[\\/])[^\\/]+_user_stories\.md$/i;
 
 function readStdinJson() {
   try {
@@ -34,10 +34,25 @@ function collectStrings(value, output) {
   }
 }
 
-function shouldValidate(payload) {
+function collectMarkdownPaths(payload) {
   const strings = [];
   collectStrings(payload, strings);
-  return strings.some((s) => s.includes(TARGET_FILE));
+
+  const paths = new Set();
+  for (const entry of strings) {
+    if (!STORY_OUTPUT_REGEX.test(entry)) {
+      continue;
+    }
+
+    const normalized = path.isAbsolute(entry) ? entry : path.resolve(WORKSPACE_ROOT, entry);
+    paths.add(normalized);
+  }
+
+  return [...paths];
+}
+
+function shouldValidate(payload) {
+  return collectMarkdownPaths(payload).length > 0;
 }
 
 function validateStoryTitles(filePath) {
@@ -71,7 +86,7 @@ function printAllow() {
 
 function printBlock(violations) {
   const message = [
-    "JIRA story title validation failed for registeration_user_stories.md.",
+    "JIRA story title validation failed for one or more generated story markdown files.",
     "Expected format: ## [PROJ-123] Story title",
     "Violations:",
     ...violations,
@@ -94,20 +109,27 @@ function printBlock(violations) {
 
 function main() {
   const payload = readStdinJson();
-  if (!shouldValidate(payload)) {
+  const markdownPaths = collectMarkdownPaths(payload);
+
+  if (markdownPaths.length === 0) {
     printAllow();
     process.exit(0);
   }
 
-  const outputPath = path.join(WORKSPACE_ROOT, TARGET_FILE);
-  const result = validateStoryTitles(outputPath);
+  const violations = [];
+  for (const markdownPath of markdownPaths) {
+    const result = validateStoryTitles(markdownPath);
+    if (!result.ok) {
+      violations.push(...result.violations.map((violation) => `${path.relative(WORKSPACE_ROOT, markdownPath)}: ${violation}`));
+    }
+  }
 
-  if (result.ok) {
+  if (violations.length === 0) {
     printAllow();
     process.exit(0);
   }
 
-  printBlock(result.violations);
+  printBlock(violations);
   process.exit(2);
 }
 
